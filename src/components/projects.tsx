@@ -1,5 +1,4 @@
 import { projects } from "@/lib/project."
-import { ExternalLink, Github, Youtube } from "lucide-react"
 
 export const Projects = () => {
     return (
@@ -41,34 +40,6 @@ export const Projects = () => {
                                     </div>
                                 </div>
 
-                                <div className="flex items-center justify-center gap-4">
-                                    {project.github && (
-                                        <button >
-                                            <a href={project.github} target="_blank" rel="noopener noreferrer">
-                                                <Github size={16} className="mr-1" />
-                                                Code
-                                            </a>
-                                        </button>
-                                    )}
-
-                                    {project.website && (
-                                        <button >
-                                            <a href={project.website} target="_blank" rel="noopener noreferrer">
-                                                <ExternalLink size={16} className="mr-1" />
-                                                Live
-                                            </a>
-                                        </button>
-                                    )}
-
-                                    {project.youtube && (
-                                        <button >
-                                            <a href={project.youtube} target="_blank" rel="noopener noreferrer">
-                                                <Youtube size={16} className="mr-1" />
-                                                Demo
-                                            </a>
-                                        </button>
-                                    )}
-                                </div>
                             </div>
                         ))}
                     </div>
