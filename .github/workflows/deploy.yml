@@ -1,0 +1,87 @@
+name: Deploy Portfolio to S3 + CloudFront
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Build & Deploy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      # ── Build the Next.js static export ──────────────────────────────────
+      - name: Install app dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build static site
+        run: bun run build
+
+      # ── Deploy CDK infrastructure ─────────────────────────────────────────
+      - name: Install CDK dependencies
+        working-directory: infra
+        run: npm ci
+
+      - name: Bootstrap CDK (idempotent)
+        working-directory: infra
+        run: npx cdk bootstrap --require-approval never
+
+      - name: Deploy CDK stack
+        working-directory: infra
+        run: npx cdk deploy --require-approval never --outputs-file cdk-outputs.json
+
+      # ── Sync static files to S3 ───────────────────────────────────────────
+      - name: Extract CDK outputs
+        working-directory: infra
+        run: |
+          BUCKET=$(jq -r '."portfolio-static-site".PortfolioBucketName' cdk-outputs.json)
+          DIST_ID=$(jq -r '."portfolio-static-site".PortfolioDistributionId' cdk-outputs.json)
+          echo "S3_BUCKET=$BUCKET" >> $GITHUB_ENV
+          echo "CF_DISTRIBUTION_ID=$DIST_ID" >> $GITHUB_ENV
+
+      - name: Sync to S3
+        run: |
+          aws s3 sync out/ s3://${{ env.S3_BUCKET }}/ \
+            --delete \
+            --cache-control "public, max-age=31536000, immutable" \
+            --exclude "*.html" \
+            --exclude "*.json"
+          aws s3 sync out/ s3://${{ env.S3_BUCKET }}/ \
+            --delete \
+            --cache-control "public, max-age=0, must-revalidate" \
+            --include "*.html" \
+            --include "*.json"
+
+      - name: Invalidate CloudFront cache
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ env.CF_DISTRIBUTION_ID }} \
+            --paths "/*"
