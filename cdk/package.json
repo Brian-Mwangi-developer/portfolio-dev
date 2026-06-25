@@ -1,0 +1,19 @@
+{
+  "name": "portfolio-cdk",
+  "version": "1.0.0",
+  "description": "CDK project for Next.js portfolio static site hosting on S3 + CloudFront",
+  "main": "lib/portfolio-stack.ts",
+  "scripts": {
+    "build": "tsc",
+    "cdk": "cdk"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.180.0",
+    "constructs": "^10.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "ts-node": "^10.9.0",
+    "@types/node": "^20.0.0"
+  }
+}
