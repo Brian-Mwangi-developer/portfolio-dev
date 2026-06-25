@@ -1,0 +1,91 @@
+name: Deploy Portfolio to AWS (S3 + CloudFront)
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  AWS_REGION: us-east-1
+  NODE_VERSION: '20'
+
+jobs:
+  build-and-deploy:
+    name: Build & Deploy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      # ── Build Next.js static export ─────────────────────────────────────────
+      - name: Install app dependencies
+        run: npm ci
+
+      - name: Build Next.js static site
+        run: npm run build
+        env:
+          NODE_ENV: production
+
+      - name: Verify static export exists
+        run: |
+          if [ ! -d "out" ]; then
+            echo "ERROR: 'out/' directory not found. Ensure next.config.ts has output: 'export'."
+            exit 1
+          fi
+          echo "Static export verified — $(find out -type f | wc -l) files found."
+
+      # ── Configure AWS credentials ────────────────────────────────────────────
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # ── Deploy CDK infrastructure ────────────────────────────────────────────
+      - name: Install CDK dependencies
+        working-directory: cdk
+        run: npm ci
+
+      - name: Bootstrap CDK (if needed)
+        working-directory: cdk
+        run: npx cdk bootstrap aws://${{ secrets.AWS_ACCOUNT_ID }}/${{ env.AWS_REGION }} --require-approval never
+
+      - name: Deploy CDK stack
+        working-directory: cdk
+        run: npx cdk deploy PortfolioStack --require-approval never --outputs-file outputs.json
+
+      - name: Show deployment outputs
+        working-directory: cdk
+        run: |
+          echo "## Deployment Complete 🚀" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f outputs.json ]; then
+            DOMAIN=$(cat outputs.json | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('PortfolioStack',{}).get('DistributionDomainName','N/A'))")
+            echo "🌍 **Live URL:** https://${DOMAIN}" >> $GITHUB_STEP_SUMMARY
+            echo "📦 **Stack:** PortfolioStack" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "| Output | Value |" >> $GITHUB_STEP_SUMMARY
+            echo "| --- | --- |" >> $GITHUB_STEP_SUMMARY
+            cat outputs.json | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin).get('PortfolioStack', {})
+          for k, v in d.items():
+              print(f'| {k} | {v} |')
+          " >> $GITHUB_STEP_SUMMARY
+          fi
