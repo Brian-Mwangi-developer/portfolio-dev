@@ -3,7 +3,7 @@ name: Melduo Deploy
 on:
   push:
     branches:
-      - "melduo/deploy-*"
+      - "main"
   workflow_dispatch:
 
 permissions:
