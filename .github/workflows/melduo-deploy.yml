@@ -1,0 +1,67 @@
+name: Melduo Deploy
+
+on:
+  push:
+    branches:
+      - main
+      - melduo/deploy-20260715-144325
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::847460071934:role/MelduoOidc-cmrkkzef
+          aws-region: us-east-1
+
+      - name: Install app dependencies
+        run: bun install
+
+      - name: Build static site
+        run: bun run build
+
+      - name: Install CDK dependencies
+        run: npm ci
+        working-directory: infra
+
+      - name: Bootstrap CDK
+        run: npx cdk bootstrap aws://847460071934/us-east-1
+        working-directory: infra
+
+      - name: Deploy CDK stack
+        run: npx cdk deploy --require-approval never
+        working-directory: infra
+
+      - name: Sync static files to S3
+        run: |
+          BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name melduo-app-cmrkkzef \
+            --query "Stacks[0].Outputs[?OutputKey=='BucketName'].OutputValue" \
+            --output text)
+          aws s3 sync out/ s3://$BUCKET --delete
+
+      - name: Invalidate CloudFront cache
+        run: |
+          DIST_ID=$(aws cloudformation describe-stacks \
+            --stack-name melduo-app-cmrkkzef \
+            --query "Stacks[0].Outputs[?OutputKey=='DistributionId'].OutputValue" \
+            --output text)
+          aws cloudfront create-invalidation --distribution-id $DIST_ID --paths "/*"
