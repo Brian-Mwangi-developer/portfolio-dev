@@ -1,0 +1,84 @@
+name: Melduo Deploy
+
+on:
+  push:
+    branches:
+      - main
+      - melduo/deploy-20260722-184649
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    name: Build & Deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── App build ──────────────────────────────────────────────────────────
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install app dependencies
+        run: bun install
+
+      - name: Build static export
+        run: bun run build
+
+      # ── AWS auth ───────────────────────────────────────────────────────────
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::847460071934:role/MelduoOidc-cmrkkzef
+          aws-region: us-east-1
+
+      # ── CDK bootstrap & deploy ─────────────────────────────────────────────
+      - name: Install CDK dependencies
+        run: npm ci
+        working-directory: infra
+
+      - name: CDK bootstrap
+        run: npx cdk bootstrap
+        working-directory: infra
+
+      - name: CDK deploy
+        run: npx cdk deploy --require-approval never
+        working-directory: infra
+
+      # ── Sync static assets to S3 ───────────────────────────────────────────
+      - name: Read SSM parameters
+        id: ssm
+        run: |
+          BUCKET=$(aws ssm get-parameter --name /melduo-app-cmrkkzef/bucket-name --query Parameter.Value --output text)
+          DIST_ID=$(aws ssm get-parameter --name /melduo-app-cmrkkzef/distribution-id --query Parameter.Value --output text)
+          echo "bucket=$BUCKET" >> "$GITHUB_OUTPUT"
+          echo "dist_id=$DIST_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Sync out/ to S3
+        run: |
+          aws s3 sync out/ s3://${{ steps.ssm.outputs.bucket }}/ \
+            --delete \
+            --cache-control "public, max-age=31536000, immutable" \
+            --exclude "*.html" \
+            --exclude "*.json"
+          aws s3 sync out/ s3://${{ steps.ssm.outputs.bucket }}/ \
+            --delete \
+            --cache-control "public, no-cache" \
+            --include "*.html" \
+            --include "*.json"
+
+      - name: Invalidate CloudFront cache
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ steps.ssm.outputs.dist_id }} \
+            --paths "/*"
